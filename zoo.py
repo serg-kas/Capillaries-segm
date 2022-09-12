@@ -144,7 +144,8 @@ def unet(num_classes=2, input_shape=(1024, 1024, 3)):
 
     model = Model(img_input, x)  # Создаем модель с входом 'img_input' и выходом 'x'
 
-    loss_fn = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
+    # loss_fn = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
+    loss_fn = dice_coef_loss
 
     # Компилируем модель
     model.compile(optimizer=Adam(),
