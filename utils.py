@@ -2,255 +2,150 @@
 import numpy as np
 import cv2 as cv
 import os
-import random
+import shutil
 import time
-import re
-import tkinter as tk  # используем чтобы узнать разрешение экрана
+import json
 
 
-# Функция проверки нужен ли этот файл для обработки
-# (специфически для данного датасета)
-def file_check(file_name, file_extension, img_type_list):
-    black_list = ['height',
-                  'BrickRedSmall1752_4K_mask',
-                  'BricksRedOld_7028_4K_mask',
-                  'Bricks_grey_4927_diffuse_8K',
-                  'Geomesh_1549_diffuse_8K',
-                  'Paving_brown_square_4316_diffuse_8K',
-                  'Paving_fishscale_5198_diffuse_8K',
-                  'Paving_grainy_flat_3180_diffuse_8K',
-                  'Paving_grassy_6623_diffuse_8K',
-                  'Paving_long_brown_4317_diffuse_8K',
-                  'Paving_origami_6931_diffuse_8K',
-                  'Paving_rounded_red_6174_diffuse_8K',
-                  'Paving_simple_colored_7183_diffuse_8K',
-                  'Paving_simple_snowy_3387_diffuse_8K',
-                  'Paving_snowy_3215_diffuse_8K',
-                  'Paving_trapeze_9174_diffuse_8K',
-                  'Paving_trapeze_mini_3387_diffuse_8K',
-                  'Roofing_corrida_8762_diffuse_4K',
-                  'Shingles_Hex_8174_diffuse',
-                  'Stone_blocks_6371_diffuse_16K',
-                  'Travertin_yellow_7349_diffuse_8K',
-                  'Wood_planks_5102_diffuse_4K',
-                  'Wood_planks_8127_diffuse_4K',
-                  'Wood_planks_grey_9351_diffuse_8K',
-                  'Wood_planks_grey_9352_diffuse_8K',
-                  'Wood_planks_new_7543_diffuse_8K',
-                  'Brick_orange_3997_diffuse_8K_dark',
-                  'Paving_antique_7375_diffuse2_8K',
-                  'Paving_park_4658_diffuse_kids_8K',
-                  'Paving_park_wet_4659_diffuse_8K',
-                  'Paving_rounded_4380_diffuse_8K',
-                  'Paving_rounded_4381_diffuse_8K',
-                  'Paving_salmon_4167_diffuse_8K',
-                  'Paving_salmon_4167_diffuse_grey_8K',
-                  'Paving_tactile_mini_7145_diffuse2_8K',
-                  'Paving_tactile_mini_7145_diffuse_8K',
-                  'Paving_tiara_4891_diffuse_red_4K',
-                  'Planks_painted_1367_diffuse3_8K',
-                  'Planks_painted_1367_diffuse_8K',
-                  'Rubber_tiles_1978_Diffuse2_4K',
-                  'Rubber_tiles_1978_Diffuse_4K',
-                  'Shinglas_brown_3176_diffuse_8K',
-                  'Tactile_Paving_6872_diffuse_4K',
-                  'Tactile_Paving_6872_mask_4K',
-                  ]
-    if file_extension not in img_type_list:
-        return False
-    for word in black_list:
-        if word.lower() in file_name.lower():
-            return False
-    return True
+# Функция проверки пар картинка/geojson
+def files_pair_check(dataset_path):
+    img_count = 0
+    error_list = []
+    all_files = sorted(os.listdir(dataset_path))
+    for file in all_files:
+        _, file_extension = os.path.splitext(file)
+        if file_extension == '.png':
+            img_count += 1
+            json_name = file.replace("png", "geojson")
+            if json_name not in all_files:
+                # print('Не нашли файл geojson для изображения {}'.format(file))
+                error_list.append(file)
+    return img_count, error_list
 
 
-# Функция подготовки изображений
-def imgs_preparing(source_path, imgs_path, masks_path, img_type_list, img_size=1024, crop=0.0, verbose=False):
+# Функция сбора информации о классах разметки сегментации
+def ann_check(dataset_path, verbose=False):
+    # Создадим списки файлов
+    img_names = []
+    ann_names = []
+    for f in sorted(os.listdir(dataset_path)):
+        _, file_extension = os.path.splitext(f)
+        if file_extension == '.png':
+            img_names.append(f)
+        elif file_extension == '.geojson':
+            ann_names.append(f)
+    # print("Нашли изображений {}, аннотаций {}".format(len(img_names), len(ann_names)))
 
-    if verbose:
-        time_start = time.time()
+    ann_set = np.array([])
+    cur_time = time.time()
+    for file_name in img_names:
+        if verbose:
+            print('В обработке (подсчет классов) (): {}'.format(file_name))
+        img_path = os.path.join(dataset_path, file_name)
+        json_path = img_path.replace("png", "geojson")
+        img = cv.imread(img_path)  # потребуется узнать размер изображения
+        ann_channels = get_mask_from_json(json_path, img.shape[:2])  # передадим размер для ч/б картинки
 
-    # Создадим папки для файлов, если их нет
-    if not (imgs_path in os.listdir('.')):
-        os.mkdir(imgs_path)
-    if not (masks_path in os.listdir('.')):
-        os.mkdir(masks_path)
+        # Нас будет интересовать только 1 канал (собственно маска )
+        # ann = np.zeros(ann_channels.shape[:2], dtype=np.float32)
+        # ann = np.where(ann_channels[:, :, 1] >= 1, 1, 0).astype(np.uint8)
 
-    # Создадим список файлов для обработки
-    source_files = sorted(os.listdir(source_path))
-    files_list = []
-    mask_count = 0  # попутно посчитаем сколько у нас файлов с масками
-    for f in source_files:
-        filename, file_extension = os.path.splitext(f)
-        # Проверяем отдельной функцией брать или не брать файл в датасет
-        if file_check(filename, file_extension, img_type_list):
-            files_list.append(f)
-            if 'mask' in filename.lower():
-                mask_count += 1
+        curr_set = np.unique(ann_channels[:,:,1])
+        ann_set = np.union1d(ann_set, curr_set)
+    print("Время выполнения: ", round(time.time() - cur_time, 2), 'c', sep='')
+    return ann_set
 
-    if verbose:
-        print('Найдено файлов с масками: {}'.format(mask_count))
-        print('Всего к обработке файлов: {}'.format(len(files_list)))
 
-    # Обрабатываем
-    for file in files_list:
-        # полные пути к файлам
-        in_file = os.path.join(source_path, file)
-        # файлы переименуем по цифровым комбинациям в их именах
-        filename, file_extension = os.path.splitext(file)
-        filename = re.findall(r'\d+', filename)[0]
-        #
-        if 'mask' in file.lower():
-            # out_file = os.path.join(masks_path, filename+file_extension)
-            out_file = os.path.join(masks_path, filename + '.png')
-            # Загружаем изображение
-            img = cv.imread(in_file, 0)
+# Функция получения маски из json (из baseline)
+def get_mask_from_json(path, image_size):
+    def parse_polygon(coordinates: dict, image_size: tuple) -> np.ndarray:
+        mask = np.zeros(image_size, dtype=np.float32)
+        if len(coordinates) == 1:
+            points = [np.int32(coordinates)]
+            cv.fillPoly(mask, points, 1)
         else:
-            # out_file = os.path.join(imgs_path, filename+file_extension)
-            out_file = os.path.join(imgs_path, filename + '.png')
-            # Загружаем изображение
-            img = cv.imread(in_file)
+            for polygon in coordinates:
+                points = [np.int32([polygon])]
+                cv.fillPoly(mask, points, 1)
+        return mask
 
-        # Размеры картинки
-        height = img.shape[0]
-        width = img.shape[1]
-
-        # Обрезаем картинку по краям
-        if crop > 0:
-            assert crop < 1
-            crop_h =int(crop * height)
-            crop_w = int(crop * width)
-            img = img[crop_h:height-crop_h, crop_w:width-crop_w]
-            # Новые размеры картинки
-            height = img.shape[0]
-            width = img.shape[1]
-            # print('Размер картинки ПОСЛЕ кропа {}'.format(img.shape))
-
-        # Рассчитаем коэффициент для изменения размера
-        if width > height:
-            scale_img = img_size / width
+    def parse_mask(shape, image_size):
+        mask = np.zeros(image_size, dtype=np.float32)
+        coordinates = shape['coordinates']
+        if shape['type'] == 'MultiPolygon':
+            for polygon in coordinates:
+                mask += parse_polygon(polygon, image_size)
         else:
-            scale_img = img_size / height
-        # и целевые размеры изображения
-        target_width = int(width * scale_img)
-        target_height = int(height * scale_img)
-        # делаем ресайз
-        img = cv.resize(img, (target_width, target_height), interpolation=cv.INTER_AREA)
+            mask += parse_polygon(coordinates, image_size)
+        return mask
 
-        # Обрабатываем маску
-        if 'mask' in file.lower():
-            # переводим в ч/б
-            # img = cv.cvtColor(img.copy(), cv.COLOR_BGR2GRAY)
+    class_ids = {"vessel": 1}
 
-            # морфология
-            # kernel = np.ones((3, 3), np.uint8)
-            # img = cv.dilate(img, kernel, iterations=1)
-            # img = cv.erode(img, kernel, iterations=1)  # делалось для Unet-1
+    with open(path, 'r', encoding='cp1251') as f:
+        json_contents = json.load(f)
 
-            # делаем трешхолд
-            img = np.where(img > 200, 255, 0)
+        num_channels = 1 + max(class_ids.values())  # 2
+        mask_channels = [np.zeros(image_size, dtype=np.float32) for _ in range(num_channels)]
+        mask = np.zeros(image_size, dtype=np.float32)
 
+        if (type(json_contents) == type({})) and (json_contents['type'] == 'FeatureCollection'):
+            features = json_contents['features']
+        elif type(json_contents) == list:
+            features = json_contents
+        else:
+            features = [json_contents]
+
+        for shape in features:
+            channel_id = class_ids["vessel"]  # 1
+            mask = parse_mask(shape['geometry'], image_size)
+            mask_channels[channel_id] = np.maximum(mask_channels[channel_id], mask)
+
+        mask_channels[0] = 1 - np.max(mask_channels[1:], axis=0)
+        result = np.stack(mask_channels, axis=-1)
+        return result
+
+
+# Функция подготовки данных
+def dataset_prep(dataset_path, imgs_path, masks_path, verbose=False):
+    # Создадим списки файлов
+    img_names = []
+    ann_names = []
+    for f in sorted(os.listdir(dataset_path)):
+        _, file_extension = os.path.splitext(f)
+        if file_extension == '.png':
+            img_names.append(f)
+        elif file_extension == '.geojson':
+            ann_names.append(f)
+    # print("Нашли изображений {}, аннотаций {}".format(len(img_names), len(ann_names)))
+    cur_time = time.time()
+    for file_name in img_names:
+        # if verbose:
+        #     print('В обработке (подготовка данных): {}'.format(file_name))
+        img_path = os.path.join(dataset_path, file_name)
+        json_path = img_path.replace("png", "geojson")
+        img = cv.imread(img_path)  # потребуется узнать размер изображения
+        ann_channels = get_mask_from_json(json_path, img.shape[:2])  # передадим размер для ч/б картинки
+
+        # Нас будет интересовать только 1 канал (собственно маска )
+        ann = np.zeros(ann_channels.shape[:2], dtype=np.float32)
+        ann = np.where(ann_channels[:, :, 1] >= 1, 255, 0).astype(np.uint8)
+        # print(img.shape, ann.shape)
+
+        # Скопируем картинку в другую папку
+        shutil.copy(os.path.join(dataset_path, file_name), imgs_path)
+        if verbose:
+            print('Скопировали файл: {}'.format(file_name))
+        # Сохраняем маску под именем картинки, но в другую папку
+        out_file = os.path.join(masks_path, file_name)
         try:
-            cv.imwrite(out_file, img)
-
+            cv.imwrite(out_file, ann)
         except IOError:
             print('Не удалось сохранить файл: {}'.format(out_file))
         finally:
             if verbose:
-                print('Обработали файл: {}'.format(out_file))
+                print('Записали файл: {}'.format(out_file))
 
-    if verbose:
-        time_end = time.time() - time_start
-        print('Время обработки, сек: {0:.1f}'.format(time_end))
-
-
-# Функция подготовки изображений в оригинальных размерах
-def imgs_preparing_fs(source_path, imgs_path, masks_path, img_type_list, crop=0.0, verbose=False):
-
-    if verbose:
-        time_start = time.time()
-
-    # Создадим папки для файлов, если их нет
-    if not (imgs_path in os.listdir('.')):
-        os.mkdir(imgs_path)
-    if not (masks_path in os.listdir('.')):
-        os.mkdir(masks_path)
-
-    # Создадим список файлов для обработки
-    source_files = sorted(os.listdir(source_path))
-    files_list = []
-    mask_count = 0  # попутно посчитаем сколько у нас файлов с масками
-    for f in source_files:
-        filename, file_extension = os.path.splitext(f)
-        # Проверяем отдельной функцией брать или не брать файл в датасет
-        if file_check(filename, file_extension, img_type_list):
-            files_list.append(f)
-            if 'mask' in filename.lower():
-                mask_count += 1
-
-    if verbose:
-        print('Найдено файлов с масками: {}'.format(mask_count))
-        print('Всего к обработке файлов: {}'.format(len(files_list)))
-
-    # Обрабатываем
-    for file in files_list:
-        # полные пути к файлам
-        in_file = os.path.join(source_path, file)
-        # файлы переименуем по цифровым комбинациям в их именах
-        filename, file_extension = os.path.splitext(file)
-        filename = re.findall(r'\d+', filename)[0]
-        #
-        if 'mask' in file.lower():
-            # out_file = os.path.join(masks_path, filename+file_extension)
-            out_file = os.path.join(masks_path, filename + '.png')
-            # Загружаем изображение
-            img = cv.imread(in_file, 0)
-        else:
-            # out_file = os.path.join(imgs_path, filename+file_extension)
-            out_file = os.path.join(imgs_path, filename + '.png')
-            # Загружаем изображение
-            img = cv.imread(in_file)
-
-        # Размеры картинки
-        height = img.shape[0]
-        width = img.shape[1]
-
-        # Обрезаем картинку по краям
-        if crop > 0:
-            assert crop < 1
-            crop_h =int(crop * height)
-            crop_w = int(crop * width)
-            img = img[crop_h:height-crop_h, crop_w:width-crop_w]
-            # Новые размеры картинки
-            height = img.shape[0]
-            width = img.shape[1]
-            # print('Размер картинки ПОСЛЕ кропа {}'.format(img.shape))
-
-        # Обрабатываем маску
-        if 'mask' in file.lower():
-            # переводим в ч/б
-            # img = cv.cvtColor(img.copy(), cv.COLOR_BGR2GRAY)
-
-            # морфология
-            # kernel = np.ones((3, 3), np.uint8)
-            # img = cv.dilate(img, kernel, iterations=1)
-            # img = cv.erode(img, kernel, iterations=1)  # делалось для Unet-1
-
-            # делаем трешхолд
-            img = np.where(img > 200, 255, 0)
-
-        try:
-            cv.imwrite(out_file, img)
-
-        except IOError:
-            print('Не удалось сохранить файл: {}'.format(out_file))
-        finally:
-            if verbose:
-                print('Обработали файл: {}'.format(out_file))
-
-    if verbose:
-        time_end = time.time() - time_start
-        print('Время обработки, сек: {0:.1f}'.format(time_end))
+    print("Время выполнения: ", round(time.time() - cur_time, 2), 'c', sep='')
 
 
 # Функция автокоррекции контраста
@@ -318,192 +213,3 @@ def img_resize_cv(image, img_size=1024):
     # делаем ресайз к целевым размерам
     image = cv.resize(image, (new_width, new_height), interpolation=cv.INTER_AREA)
     return image
-
-
-# Функция визуализации
-def show_results(results, titles, N_cols=3, N_rows=2):
-
-    # Определим разрешение экрана
-    def get_screen_resolution():
-        root = tk.Tk()
-        W = root.winfo_screenwidth()
-        H = root.winfo_screenheight()
-        print('Info: Screen resolution: ({},{})'.format(W, H))
-        if W < 1024 or H < 768:
-            W = 1200
-            H = 800
-        return W, H
-
-    # Get optimal font scale
-    def get_optimal_font_scale(text, width):
-        for scale in reversed(range(0, 60, 1)):
-            textSize = cv.getTextSize(text, fontFace=cv.FONT_HERSHEY_SIMPLEX, fontScale=scale / 10, thickness=3)
-            new_width = textSize[0][0]
-            if new_width <= width:
-                return scale / 10
-        return 1
-
-    # Concatenation list of arrays
-    def concat_from_list(frame_list, N_cols, N_rows):
-        row_list = []
-        for r in range(N_rows):
-            row_list.append(np.concatenate(frame_list[N_cols * r: N_cols * (r + 1)], axis=1))
-        return np.concatenate(row_list, axis=0)
-
-    # Подготовим темплейт N_rows * N_cols
-    # Узнаем разрешение экрана
-    W, H = get_screen_resolution()
-    # Размер для вывода на экран
-    W, H = int(W * 0.85), int(H * 0.85)
-    # Размер ячейки
-    w, h = int(W / N_cols), int(H / N_rows)
-    # Всего ячеек
-    N_cells = int(N_cols * N_rows)
-    # Занятых ячеек
-    N_images = len(results)
-    assert N_cells >= N_images, 'Не хватает ячеек для изображений'
-    img_black = np.zeros((h, w, 3), dtype=np.uint8)
-    img_black_list = [img_black for _ in range(N_cells - N_images)]
-    # Готовим список картинок для полного кадра
-    images_list = [cv.resize(results[idx], (w, h), interpolation=cv.INTER_AREA) for idx in range(N_images)] + img_black_list
-    # Нанесем надписи
-    font = cv.FONT_HERSHEY_SIMPLEX
-    for idx in range(N_images):
-        fontScale = get_optimal_font_scale(titles[idx], int(w * 2 / 3))
-        cv.putText(images_list[idx], titles[idx], (40, 40), font, fontScale, (0, 0, 255), 2, cv.LINE_AA)
-    # Собираем и возвращаем полный кадр
-    return concat_from_list(images_list, N_cols, N_rows)
-
-
-# Функция контуры на основе бинаризации hsv
-def opencv_contours(img):
-    # To hsv
-    hsv = cv.cvtColor(img, cv.COLOR_BGR2HSV)
-    # Get the Saturation out
-    S = hsv[:, :, 1]
-    # Threshold it
-    (ret, T) = cv.threshold(S, 32, 255, cv.THRESH_BINARY)
-    # Find contours
-    contours, h = cv.findContours(T, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
-    # contours, h = cv.findContours(T, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE)
-
-    #
-    for c in contours:
-        area = cv.contourArea(c)
-        # Only if the area is not miniscule (arbitrary)
-        if area > 100:
-            (x, y, w, h) = cv.boundingRect(c)
-
-            # Нарисовать контуры
-            # cv.drawContours(img, [c], -1, (0, 255, 0), 2)
-
-            # Закрасить каждый кирпич случайным цветом
-            tpl = tuple([random.randint(0, 255) for _ in range(3)])
-            cv.rectangle(img, (x, y), (x + w, y + h), tpl, -1)
-    return img
-
-
-# НЕ АДАПТИРОВАЛАСЬ для этого проекта
-# Функция получения контура маски и заливки его результатом преобразования canny
-def cut_and_canny_contour_cv(image, mask, cnt_thickness=4, kernel=(5, 5)):
-    """
-    :param img:
-    :param mask:
-    :param cnt_thickness:
-    :param kernel:
-    :return: result: изображение с нанесенной маской
-    """
-    def apply_mask(image, mask):
-        """
-        :param image: исходное изображение
-        :param mask: маска
-        :return: изображение с наложенной маской
-        """
-        image[:, :, 0] = np.where(mask == 0, 127, image[:, :, 0])
-        image[:, :, 1] = np.where(mask == 0, 127, image[:, :, 1])
-        image[:, :, 2] = np.where(mask == 0, 127, image[:, :, 2])
-        return image
-    #
-    image_backup = image.copy()
-
-    # Накладываем полученную маску [mask] на изображение
-    img = apply_mask(image, mask)  # своя функция наложения маски
-    tmp = img.copy()
-    # prepare a blurred image
-    blur = cv.GaussianBlur(img, kernel, 0)
-    # find contours
-    contours, hierarchy = cv.findContours(mask, cv.RETR_TREE, cv.CHAIN_APPROX_SIMPLE)
-    # draw contours using passed [cnt_thickness] on a temporary image
-    _ = cv.drawContours(tmp, contours, 0, (0, 255, 0), cnt_thickness)
-    # create contour mask
-    hsv = cv.cvtColor(tmp, cv.COLOR_RGB2HSV)
-    cont_mask = cv.inRange(hsv, (36, 25, 25), (70, 255, 255))
-
-    # EXPERIMENTAL
-    cont_mask = cv.dilate(cont_mask, None, iterations=1)
-    cont_mask = cv.erode(cont_mask, None, iterations=3)
-
-    # apply contour mask
-    tmp = cv.bitwise_and(blur, blur, mask=cont_mask)
-    # Image.fromarray(tmp).show()
-
-    # ==== CANNY =====
-    # Переходим к ч/б
-    gray = cv.cvtColor(image_backup, cv.COLOR_BGR2GRAY)
-
-    # == Parameters =======================================================================
-    BLUR = 21
-    CANNY_THRESH_1 = 10
-    CANNY_THRESH_2 = 200
-    MASK_DILATE_ITER = 10
-    MASK_ERODE_ITER = 10
-    # MASK_COLOR = (0.0, 0.0, 1.0)  # Red mask
-    MASK_COLOR = (0.5, 0.5, 0.5)  # Gray Mask
-    # MASK_COLOR = (0.0, 0.0, 0.0)  # Black Mask
-
-    # -- Edge detection -------------------------------------------------------------------
-    edges = cv.Canny(gray, CANNY_THRESH_1, CANNY_THRESH_2)
-    edges = cv.dilate(edges, None)
-    edges = cv.erode(edges, None)
-
-    # -- Find contours in edges, sort by area ---------------------------------------------
-    contour_info = []
-    contours, _ = cv.findContours(edges, cv.RETR_LIST, cv.CHAIN_APPROX_NONE)
-    for c in contours:
-        contour_info.append((
-            c,
-            cv.isContourConvex(c),
-            cv.contourArea(c),
-        ))
-    contour_info = sorted(contour_info, key=lambda c: c[2], reverse=True)
-    max_contour = contour_info[0]
-
-    # -- Create empty mask, draw filled polygon on it corresponding to largest contour ----
-    # Mask is black, polygon is white
-    canny_mask = np.zeros(edges.shape)
-    cv.fillConvexPoly(canny_mask, max_contour[0], (255))
-
-    # -- Smooth mask, then blur it --------------------------------------------------------
-    canny_mask = cv.dilate(canny_mask, None, iterations=MASK_DILATE_ITER)
-    canny_mask = cv.erode(canny_mask, None, iterations=MASK_ERODE_ITER)
-    canny_mask = cv.GaussianBlur(canny_mask, (BLUR, BLUR), 0)
-
-    mask_stack = np.dstack([canny_mask] * 3)  # Create 3-channel alpha mask
-
-    # -- Blend masked img into MASK_COLOR background --------------------------------------
-    mask_stack = mask_stack.astype('float32') / 255.0  # Use float matrices,
-    tmp_img = image.astype('float32') / 255.0  # for easy blending
-
-    canny_masked = (mask_stack * tmp_img) + ((1 - mask_stack) * MASK_COLOR)  # Blend
-    canny_masked = (canny_masked * 255).astype('uint8')  # Convert back to 8-bit
-    # Image.fromarray(canny_masked).show()
-
-    #
-    # result = np.where(tmp > 0, blur, img)
-    # result = np.where(tmp > 0, canny_masked, result)
-    result = np.where(tmp > 0, canny_masked, img)
-    # Image.fromarray(result).show()
-    return result
-
-
-
