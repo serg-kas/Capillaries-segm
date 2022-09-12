@@ -146,7 +146,8 @@ def unet(num_classes=2, input_shape=(1024, 1024, 3)):
 
     # Компилируем модель
     model.compile(optimizer=Adam(),
-                  loss='categorical_crossentropy',
+                  # loss='categorical_crossentropy',
+                  loss=[dice_coef_loss],
                   metrics=[dice_coef])
     return model
 
