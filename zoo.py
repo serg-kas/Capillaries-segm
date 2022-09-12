@@ -32,6 +32,11 @@ def dice_coef_np(y_true, y_pred):
     return (2. * np.sum(y_true * y_pred) + 1.) / (np.sum(y_true) + np.sum(y_pred) + 1.)
 
 
+# Кастомный loss
+def dice_coef_loss(y_true, y_pred):
+    1 - dice_coef(y_true, y_pred)
+
+
 #  Функция создания сети
 #    Входные параметры:
 #    - num_classes - количество классов
