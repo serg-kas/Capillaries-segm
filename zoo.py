@@ -34,7 +34,7 @@ def dice_coef_np(y_true, y_pred):
 
 # Кастомный loss
 def dice_coef_loss(y_true, y_pred):
-    1 - dice_coef(y_true, y_pred)
+    return 1 - dice_coef(y_true, y_pred)
 
 
 #  Функция создания сети
