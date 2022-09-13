@@ -13,35 +13,37 @@ from tensorflow.keras.optimizers import Adam, RMSprop, SGD
 from tensorflow.keras import backend as K
 from tensorflow.keras.models import load_model
 #
-# os.environ['CUDA_VISIBLE_DEVICES'] = '-1'  # закомментировать для использования GPU
+# os.environ['CUDA_VISIBLE_DEVICES'] = '-1'  # закомментировать для использования GPU (например в colab)
 # os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'   # уровень 2 - только сообщения об ошибках
 import tensorflow as tf
 
-
+######################################################################################
 # Функция метрики, обрабатывающая пересечение двух областей
-# Кодировка OHE
 def dice_coef(y_true, y_pred):
     # Возвращаем площадь пересечения деленную на площадь объединения двух областей
     return (2. * K.sum(y_true * y_pred) + 1.) / (K.sum(y_true) + K.sum(y_pred) + 1.)
 
 
 # Функция метрики, обрабатывающая пересечение двух областей в numpy
-# Кодировка OHE
 def dice_coef_np(y_true, y_pred):
     # Возвращаем площадь пересечения деленную на площадь объединения двух областей
     return (2. * np.sum(y_true * y_pred) + 1.) / (np.sum(y_true) + np.sum(y_pred) + 1.)
 
 
-# Кастомный loss
+# Для использования как функции потерь
 def dice_coef_loss(y_true, y_pred):
     return 1 - dice_coef(y_true, y_pred)
+########################################################################################
 
 
-#  Функция создания сети
+#  Функция создания сети типа U-net
 #    Входные параметры:
 #    - num_classes - количество классов
 #    - input_shape - размерность карты сегментации
-def unet(num_classes=2, input_shape=(1024, 1024, 3)):
+#    - opt - оптимайзер
+#    - loss_fn - функция потерь
+#    - metric_fn - функция метрики
+def unet(num_classes=2, input_shape=(1024, 1024, 3), opt=Adam(lr=1e-4), loss_fn='categorical_crossentropy', metrics='accuracy'):
     img_input = Input(input_shape)  # Создаем входной слой с размерностью input_shape
 
     # Block 1
@@ -144,14 +146,13 @@ def unet(num_classes=2, input_shape=(1024, 1024, 3)):
 
     model = Model(img_input, x)  # Создаем модель с входом 'img_input' и выходом 'x'
 
-    # loss_fn = tf.keras.losses.CategoricalCrossentropy(from_logits=True)
-    loss_fn = dice_coef_loss
-
     # Компилируем модель
-    model.compile(optimizer=Adam(),
+    model.compile(optimizer=opt,
                   # loss='categorical_crossentropy',
-                  loss=loss_fn,
-                  metrics=[dice_coef])
+                  loss=[loss_fn],
+                  # metrics=[dice_coef],
+                  metrics=[metrics],
+                  )
     return model
 
 
