@@ -44,7 +44,7 @@ def dice_coef_loss(y_true, y_pred):
 #    - loss_fn - функция потерь
 #    - metric_fn - функция метрики
 def unet(num_classes=2, input_shape=(1024, 1024, 3),
-         opt=Adam(lr=1e-4), loss_fn='categorical_crossentropy', metrics_fn='accuracy'):
+         opt=Adam(learning_rate=1e-4), loss_fn='categorical_crossentropy', metrics_fn='accuracy'):
     img_input = Input(input_shape)  # Создаем входной слой с размерностью input_shape
 
     # Block 1
