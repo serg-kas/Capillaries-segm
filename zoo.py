@@ -2,6 +2,7 @@
 import numpy as np
 import cv2 as cv
 import os
+import sys
 import time
 #
 import utils as u
@@ -12,10 +13,12 @@ from tensorflow.keras.layers import Input, Conv2DTranspose, concatenate, Activat
 from tensorflow.keras.optimizers import Adam, RMSprop, SGD
 from tensorflow.keras import backend as K
 from tensorflow.keras.models import load_model
-#
-# os.environ['CUDA_VISIBLE_DEVICES'] = '-1'  # закомментировать для использования GPU (например в colab)
-# os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'   # уровень 2 - только сообщения об ошибках
+# Если мы не в колабе, то запретим GPU
+if 'google.colab' not in sys.modules:
+    os.environ['CUDA_VISIBLE_DEVICES'] = '-1'  #
+    os.environ['TF_CPP_MIN_LOG_LEVEL'] = '3'   # уровень 2 - только сообщения об ошибках
 import tensorflow as tf
+
 
 ######################################################################################
 # Функция метрики, обрабатывающая пересечение двух областей
