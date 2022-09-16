@@ -21,6 +21,7 @@ import tensorflow as tf
 
 
 ######################################################################################
+######################################################################################
 # Функция метрики, обрабатывающая пересечение двух областей
 def dice_coef(y_true, y_pred):
     # Возвращаем площадь пересечения деленную на площадь объединения двух областей
@@ -36,6 +37,19 @@ def dice_coef_np(y_true, y_pred):
 # Для использования как функции потерь
 def dice_coef_loss(y_true, y_pred):
     return 1 - dice_coef(y_true, y_pred)
+
+
+# Комбинированная функция loss = cross_entropy + dice_coef
+def my_loss(y_true, y_pred):
+    def dice_loss(y_true, y_pred):
+        numerator = 2. * K.sum(y_true * y_pred) + 1.
+        denominator = K.sum(y_true) + K.sum(y_pred) + 1.
+
+        return 1 - numerator / denominator
+
+    y_true = tf.cast(y_true, tf.float32)  # ?
+    o = tf.nn.sigmoid_cross_entropy_with_logits(y_true, y_pred) + dice_loss(y_true, y_pred)
+    return tf.reduce_mean(o)
 ########################################################################################
 
 
